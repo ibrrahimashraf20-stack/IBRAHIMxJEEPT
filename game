@@ -1,0 +1,412 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JEEPT × IBRAHIM</title>
+
+<style>
+  body {
+    margin: 0;
+    padding: 10px;
+    background: #101020;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+  }
+
+  h1 { color: #ff4545; }
+
+  canvas {
+    display: block;
+    width: 95%;
+    max-width: 800px;
+    margin: 10px auto;
+    background: #15152d;
+    border: 3px solid #ff4545;
+    border-radius: 10px;
+    touch-action: manipulation;
+  }
+
+  button {
+    background: #ff4545;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 12px;
+    margin: 4px;
+    font-size: 14px;
+    font-weight: bold;
+  }
+
+  #levels button { background: #35355a; }
+  #levels button.selected { background: #ff4545; }
+  #musicButton { background: #8b45ff; }
+</style>
+</head>
+
+<body>
+
+<h1>JEEPT × IBRAHIM</h1>
+<p>Tap to jump over the spikes! 🎮</p>
+
+<div id="levels">
+  <button class="selected" onclick="chooseLevel(0)">1. Neon Run</button>
+  <button onclick="chooseLevel(1)">2. Laser Rush</button>
+  <button onclick="chooseLevel(2)">3. Demon Mode</button>
+  <button onclick="chooseLevel(3)">4. Space Flight</button>
+  <button onclick="chooseLevel(4)">5. Jeept Extreme</button>
+</div>
+
+<canvas id="game" width="800" height="280"></canvas>
+
+<div>
+  <button onclick="restart()">🔄 Restart</button>
+  <button onclick="jump()">⬆️ JUMP!</button>
+  <button id="musicButton" onclick="toggleMusic()">🎵 MUSIC OFF</button>
+</div>
+
+<p id="status">Ready, player? 😎</p>
+<p>Score: <span id="score">0</span> / 10</p>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const statusText = document.getElementById("status");
+const scoreText = document.getElementById("score");
+const musicButton = document.getElementById("musicButton");
+
+// GAME SETTINGS
+const ground = 220;
+const cubeSize = 28;
+const playerX = 100;
+
+let playerY = ground - cubeSize;
+let velocity = 0;
+const gravity = 0.7;
+let speed = 4;
+let score = 0;
+let level = 0;
+let dead = false;
+let won = false;
+let obstacles = [];
+
+// BACKGROUND MUSIC
+let audioContext = null;
+let musicTimer = null;
+let musicOn = false;
+let noteIndex = 0;
+
+// Original, synthesized 8-bit style melody.
+// No music files or downloads required.
+const melody = [
+  523, 659, 784, 659,
+  523, 659, 880, 784,
+  659, 784, 988, 784,
+  659, 587, 523, 392,
+  523, 659, 784, 1047,
+  988, 784, 659, 523
+];
+
+const levelNames = [
+  "Neon Run",
+  "Laser Rush",
+  "Demon Mode",
+  "Space Flight",
+  "Jeept Extreme"
+];
+
+const levelSpeeds = [4, 5, 6, 5.5, 7];
+const levelGaps = [300, 250, 210, 230, 180];
+
+function playNote() {
+  if (!audioContext || !musicOn) return;
+
+  const frequency = melody[noteIndex % melody.length];
+  noteIndex++;
+
+  const oscillator = audioContext.createOscillator();
+  const volume = audioContext.createGain();
+
+  oscillator.type = "square";
+  oscillator.frequency.value = frequency;
+
+  const now = audioContext.currentTime;
+  volume.gain.setValueAtTime(0.035, now);
+  volume.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+  oscillator.connect(volume);
+  volume.connect(audioContext.destination);
+
+  oscillator.start(now);
+  oscillator.stop(now + 0.16);
+}
+
+async function toggleMusic() {
+  try {
+    // Create audio only after the player taps the button.
+    if (!audioContext) {
+      const AudioContextClass =
+        window.AudioContext || window.webkitAudioContext;
+
+      if (!AudioContextClass) {
+        statusText.textContent = "Audio isn't supported in this browser.";
+        return;
+      }
+
+      audioContext = new AudioContextClass();
+    }
+
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
+    musicOn = !musicOn;
+
+    if (musicOn) {
+      playNote();
+      musicTimer = setInterval(playNote, 180);
+      musicButton.textContent = "🎵 MUSIC ON";
+      statusText.textContent = "8-bit music activated! 🎶";
+    } else {
+      clearInterval(musicTimer);
+      musicTimer = null;
+      musicButton.textContent = "🎵 MUSIC OFF";
+      statusText.textContent = "Music off. Keep jumping! 😎";
+    }
+  } catch (error) {
+    statusText.textContent = "Couldn't start music. Try tapping again!";
+  }
+}
+
+// LEVELS
+function chooseLevel(n) {
+  level = n;
+
+  document.querySelectorAll("#levels button").forEach((button, i) => {
+    button.classList.toggle("selected", i === n);
+  });
+
+  restart();
+}
+
+// RESTART
+function restart() {
+  playerY = ground - cubeSize;
+  velocity = 0;
+  speed = levelSpeeds[level];
+  score = 0;
+  dead = false;
+  won = false;
+  obstacles = [];
+
+  let x = 420;
+
+  for (let i = 0; i < 12; i++) {
+    obstacles.push({
+      x: x,
+      width: 28,
+      height: 30 + Math.random() * 15,
+      passed: false
+    });
+
+    x += levelGaps[level] + Math.random() * 100;
+  }
+
+  scoreText.textContent = score;
+  statusText.textContent = "Level: " + levelNames[level] + " 😎";
+}
+
+// JUMP
+function jump() {
+  if (dead || won) {
+    restart();
+    return;
+  }
+
+  if (playerY >= ground - cubeSize - 1) {
+    velocity = -12;
+  }
+}
+
+// DRAW EVERYTHING
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Stars
+  ctx.fillStyle = "white";
+
+  for (let i = 0; i < 35; i++) {
+    const x = (i * 137 + score * 0.3) % canvas.width;
+    const y = (i * 53) % 180;
+    ctx.fillRect(x, y, 2, 2);
+  }
+
+  // FIXED FLOOR: same Y position as the cube's landing point.
+  ctx.fillStyle = "#48f5ff";
+  ctx.fillRect(0, ground, canvas.width, 3);
+
+  // SPIKES: bases sit exactly on the floor.
+  ctx.fillStyle = level === 2 ? "#ff3030" : "#ff4545";
+
+  for (const ob of obstacles) {
+    ctx.beginPath();
+    ctx.moveTo(ob.x, ground);
+    ctx.lineTo(ob.x + ob.width / 2, ground - ob.height);
+    ctx.lineTo(ob.x + ob.width, ground);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // PLAYER CUBE
+  ctx.save();
+
+  ctx.translate(
+    playerX + cubeSize / 2,
+    playerY + cubeSize / 2
+  );
+
+  ctx.rotate(Math.max(-0.4, Math.min(0.4, -velocity * 0.035)));
+
+  ctx.fillStyle = "#ff4545";
+  ctx.fillRect(
+    -cubeSize / 2,
+    -cubeSize / 2,
+    cubeSize,
+    cubeSize
+  );
+
+  ctx.strokeStyle = "white";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(
+    -cubeSize / 2,
+    -cubeSize / 2,
+    cubeSize,
+    cubeSize
+  );
+
+  ctx.restore();
+
+  // SCORE AND LEVEL
+  ctx.fillStyle = "white";
+  ctx.font = "bold 20px Arial";
+  ctx.fillText("Score: " + score, 20, 30);
+  ctx.fillText(levelNames[level], 20, 55);
+
+  if (dead || won) {
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = dead ? "#ff4545" : "#48ff91";
+    ctx.font = "bold 38px Arial";
+
+    ctx.fillText(
+      dead ? "CRASH! 💀" : "LEVEL COMPLETE! 🏆",
+      canvas.width / 2,
+      120
+    );
+
+    ctx.fillStyle = "white";
+    ctx.font = "20px Arial";
+    ctx.fillText(
+      "Tap to play again!",
+      canvas.width / 2,
+      160
+    );
+
+    ctx.textAlign = "left";
+  }
+}
+
+// UPDATE GAME
+function update() {
+  if (dead || won) return;
+
+  // GRAVITY
+  velocity += gravity;
+  playerY += velocity;
+
+  // LAND ON THE FIXED FLOOR
+  if (playerY + cubeSize >= ground) {
+    playerY = ground - cubeSize;
+    velocity = 0;
+  }
+
+  // MOVE SPIKES AND CHECK COLLISIONS
+  for (const ob of obstacles) {
+    ob.x -= speed;
+
+    const overlapsX =
+      playerX + cubeSize > ob.x &&
+      playerX < ob.x + ob.width;
+
+    const overlapsY =
+      playerY + cubeSize > ground - ob.height &&
+      playerY < ground;
+
+    if (overlapsX && overlapsY) {
+      dead = true;
+      statusText.textContent = "You crashed! 💀 Tap to retry.";
+    }
+
+    if (!ob.passed && ob.x + ob.width < playerX) {
+      ob.passed = true;
+      score++;
+      scoreText.textContent = score;
+    }
+  }
+
+  // ADD MORE SPIKES
+  if (
+    obstacles.length &&
+    obstacles[0].x + obstacles[0].width < 0
+  ) {
+    obstacles.shift();
+  }
+
+  if (
+    obstacles.length &&
+    obstacles[obstacles.length - 1].x < canvas.width - 100
+  ) {
+    const last = obstacles[obstacles.length - 1];
+
+    obstacles.push({
+      x: last.x + levelGaps[level] + Math.random() * 100,
+      width: 28,
+      height: 30 + Math.random() * 15,
+      passed: false
+    });
+  }
+
+  // WIN
+  if (score >= 10) {
+    won = true;
+    statusText.textContent = "YOU WIN! 🏆";
+  }
+}
+
+// MAIN GAME LOOP
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// CONTROLS
+canvas.addEventListener("pointerdown", jump);
+
+document.addEventListener("keydown", function(event) {
+  if (event.code === "Space" || event.code === "ArrowUp") {
+    event.preventDefault();
+    jump();
+  }
+});
+
+restart();
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
